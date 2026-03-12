@@ -42,7 +42,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "iOS": {
       "frameworks": [
         "libz.tbd",
@@ -61,9 +61,5 @@
       "infoPlist": "./Info.plist"
     }
   },
-  "plugins": {
-    "updater": {
-      active: false
-    }
-  }
+  "plugins": {}
 }
