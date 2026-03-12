@@ -5,7 +5,7 @@ on:
 
 jobs:
   build_macos_intel:
-    runs-on: macos-15-intel   # Intel runner
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,8 +27,28 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build Tauri app (macOS)
-        run: npm run tauri -- build --bundles app
+      - name: Prepare temporary Tauri updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY_PATH="$RUNNER_TEMP/codexmonitor.key"
+          npm run tauri signer generate -- --ci -w "$KEY_PATH"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_PATH"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+          } >> "$GITHUB_ENV"
+
+      - name: Build Tauri app and DMG (macOS Intel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --bundles app,dmg
+
+      - name: Show bundle outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          find src-tauri/target/release/bundle -maxdepth 3 -type f | sort
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
