@@ -1,111 +1,40 @@
-name: Build macOS Intel DMG (unsigned)
+name: Build macOS Intel (unsigned)
 
 on:
   workflow_dispatch:
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-jobs:
-  build:
-    runs-on: macos-15-intel
 
+jobs:
+  build_macos_intel:
+    runs-on: macos-15-intel   # Intel runner
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show Xcode version
-        run: xcodebuild -version
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - name: Detect project file & list schemes
-        shell: bash
+      - name: Install deps (brew)
         run: |
-          set -euxo pipefail
+          brew update
+          brew install cmake pkg-config
 
-          if ls *.xcworkspace >/dev/null 2>&1; then
-            echo "WORKSPACE=$(ls *.xcworkspace | head -n 1)" >> $GITHUB_ENV
-            echo "Detected workspace: $(ls *.xcworkspace | head -n 1)"
-            xcodebuild -list -workspace "$(ls *.xcworkspace | head -n 1)"
-          elif ls *.xcodeproj >/dev/null 2>&1; then
-            echo "PROJECT=$(ls *.xcodeproj | head -n 1)" >> $GITHUB_ENV
-            echo "Detected project: $(ls *.xcodeproj | head -n 1)"
-            xcodebuild -list -project "$(ls *.xcodeproj | head -n 1)"
-          else
-            echo "No .xcworkspace or .xcodeproj found at repo root."
-            echo "If the Xcode files are in a subfolder, update this workflow to cd into it."
-            exit 1
-          fi
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      # 重要：如果这里构建失败，通常只需要改 SCHEME 这个变量
-      - name: Build (x86_64, Release)
-        shell: bash
-        run: |
-          set -euxo pipefail
+      - name: Install npm deps
+        run: npm ci
 
-          SCHEME="CodexMonitor"   # <-- 如果失败，回到 Actions 日志里看有哪些 Schemes，把这里改成正确的
+      - name: Build Tauri app (macOS)
+        run: npm run tauri -- build --bundles app
 
-          DERIVED="build/DerivedData"
-
-          if [[ -n "${WORKSPACE:-}" ]]; then
-            xcodebuild \
-              -workspace "$WORKSPACE" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -derivedDataPath "$DERIVED" \
-              -destination "generic/platform=macOS" \
-              ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
-              clean build
-          else
-            xcodebuild \
-              -project "$PROJECT" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -derivedDataPath "$DERIVED" \
-              -destination "generic/platform=macOS" \
-              ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
-              clean build
-          fi
-
-      - name: Locate .app
-        shell: bash
-        run: |
-          set -euxo pipefail
-          APP_PATH="$(find build/DerivedData -type d -name '*.app' | head -n 1)"
-          if [[ -z "$APP_PATH" ]]; then
-            echo "No .app found in DerivedData."
-            exit 1
-          fi
-          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-          echo "Found app at: $APP_PATH"
-          ls -lah "$APP_PATH"
-
-      - name: Create DMG (unsigned) using hdiutil
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          DMG_NAME="CodexMonitor-Intel"
-          STAGE="build/dmg_stage"
-
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE"
-
-          # 拷贝 .app 到临时目录
-          cp -R "$APP_PATH" "$STAGE/"
-
-          # 可选：放一个 Applications 快捷方式（很多 dmg 都这么做）
-          ln -s /Applications "$STAGE/Applications"
-
-          # 生成 dmg（UDZO 为压缩只读格式）
-          hdiutil create \
-            -volname "$DMG_NAME" \
-            -srcfolder "$STAGE" \
-            -ov \
-            -format UDZO \
-            "$DMG_NAME.dmg"
-
-          ls -lah "$DMG_NAME.dmg"
-
-      - name: Upload DMG artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CodexMonitor-Intel-DMG
-          path: CodexMonitor-Intel.dmg
+          name: CodexMonitor-macos-intel
+          path: |
+            src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/**/*
