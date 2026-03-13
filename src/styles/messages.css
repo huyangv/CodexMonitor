@@ -13,6 +13,18 @@
   border: none;
 }
 
+.messages-virtual {
+  position: relative;
+  width: 100%;
+}
+
+.messages-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .main .messages-full {
   margin-top: calc(-1 * var(--main-topbar-height));
   padding-top: calc(12px + var(--main-topbar-height));

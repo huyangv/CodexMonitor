@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ChevronUp from "lucide-react/dist/esm/icons/chevron-up";
 import type {
@@ -24,6 +25,7 @@ import {
   buildToolGroups,
   computePlanFollowupState,
   formatCount,
+  type MessageListEntry,
   parseReasoning,
   scrollKeyForItems,
 } from "../utils/messageRenderUtils";
@@ -64,6 +66,10 @@ type MessagesProps = {
   onQuoteMessage?: (text: string) => void;
 };
 
+const MESSAGE_VIRTUALIZATION_THRESHOLD = 80;
+const MESSAGE_ROW_ESTIMATE_PX = 240;
+const MESSAGE_OVERSCAN = 6;
+
 function toMarkdownQuote(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -100,6 +106,8 @@ export const Messages = memo(function Messages({
 }: MessagesProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const rowNodesByIdRef = useRef(new Map<string, HTMLDivElement>());
+  const rowResizeObserversRef = useRef(new Map<Element, ResizeObserver>());
   const autoScrollRef = useRef(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const manuallyToggledExpandedRef = useRef<Set<string>>(new Set());
@@ -107,6 +115,7 @@ export const Messages = memo(function Messages({
     new Set(),
   );
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const copyTimeoutRef = useRef<number | null>(null);
   const activeUserInputRequestId =
     threadId && userInputRequests.length
@@ -159,6 +168,25 @@ export const Messages = memo(function Messages({
   useLayoutEffect(() => {
     autoScrollRef.current = true;
   }, [threadId]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      setViewportHeight(0);
+      return;
+    }
+    const updateViewportHeight = () => {
+      setViewportHeight(container.clientHeight);
+    };
+    updateViewportHeight();
+    const observer = new ResizeObserver(() => {
+      updateViewportHeight();
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   const toggleExpanded = useCallback((id: string) => {
     manuallyToggledExpandedRef.current.add(id);
@@ -311,6 +339,60 @@ export const Messages = memo(function Messages({
   }, [scrollKey, isThinking, isNearBottom, threadId]);
 
   const groupedItems = useMemo(() => buildToolGroups(visibleItems), [visibleItems]);
+  const shouldVirtualize =
+    groupedItems.length >= MESSAGE_VIRTUALIZATION_THRESHOLD && viewportHeight > 0;
+
+  const rowVirtualizer = useVirtualizer({
+    count: groupedItems.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => MESSAGE_ROW_ESTIMATE_PX,
+    overscan: MESSAGE_OVERSCAN,
+  });
+
+  const virtualRows = shouldVirtualize ? rowVirtualizer.getVirtualItems() : [];
+
+  const getEntryKey = useCallback((entry: MessageListEntry) => {
+    return entry.kind === "toolGroup" ? `tool-group-${entry.group.id}` : entry.item.id;
+  }, []);
+
+  const setVirtualRowRef = useCallback(
+    (rowId: string) => (node: HTMLDivElement | null) => {
+      const prevNode = rowNodesByIdRef.current.get(rowId);
+      if (prevNode && prevNode !== node) {
+        const prevObserver = rowResizeObserversRef.current.get(prevNode);
+        if (prevObserver) {
+          prevObserver.disconnect();
+          rowResizeObserversRef.current.delete(prevNode);
+        }
+      }
+      if (!node) {
+        rowNodesByIdRef.current.delete(rowId);
+        return;
+      }
+      rowNodesByIdRef.current.set(rowId, node);
+      rowVirtualizer.measureElement(node);
+      if (rowResizeObserversRef.current.has(node)) {
+        return;
+      }
+      const observer = new ResizeObserver(() => {
+        rowVirtualizer.measureElement(node);
+      });
+      observer.observe(node);
+      rowResizeObserversRef.current.set(node, observer);
+    },
+    [rowVirtualizer],
+  );
+
+  useEffect(() => {
+    return () => {
+      const observers = rowResizeObserversRef.current;
+      for (const observer of observers.values()) {
+        observer.disconnect();
+      }
+      observers.clear();
+      rowNodesByIdRef.current.clear();
+    };
+  }, []);
 
   const hasActiveUserInputRequest = activeUserInputRequestId !== null;
   const hasVisibleUserInputRequest = hasActiveUserInputRequest && Boolean(onUserInputSubmit);
@@ -467,55 +549,83 @@ export const Messages = memo(function Messages({
     return null;
   };
 
+  const renderEntry = useCallback(
+    (entry: MessageListEntry) => {
+      if (entry.kind === "toolGroup") {
+        const { group } = entry;
+        const isCollapsed = collapsedToolGroups.has(group.id);
+        const summaryParts = [
+          formatCount(group.toolCount, "tool call", "tool calls"),
+        ];
+        if (group.messageCount > 0) {
+          summaryParts.push(formatCount(group.messageCount, "message", "messages"));
+        }
+        const summaryText = summaryParts.join(", ");
+        const groupBodyId = `tool-group-${group.id}`;
+        const ChevronIcon = isCollapsed ? ChevronDown : ChevronUp;
+        return (
+          <div
+            key={`tool-group-${group.id}`}
+            className={`tool-group ${isCollapsed ? "tool-group-collapsed" : ""}`}
+          >
+            <div className="tool-group-header">
+              <button
+                type="button"
+                className="tool-group-toggle"
+                onClick={() => toggleToolGroup(group.id)}
+                aria-expanded={!isCollapsed}
+                aria-controls={groupBodyId}
+                aria-label={isCollapsed ? "Expand tool calls" : "Collapse tool calls"}
+              >
+                <span className="tool-group-chevron" aria-hidden>
+                  <ChevronIcon size={14} />
+                </span>
+                <span className="tool-group-summary">{summaryText}</span>
+              </button>
+            </div>
+            {!isCollapsed && (
+              <div className="tool-group-body" id={groupBodyId}>
+                {group.items.map(renderItem)}
+              </div>
+            )}
+          </div>
+        );
+      }
+      return renderItem(entry.item);
+    },
+    [collapsedToolGroups, renderItem, toggleToolGroup],
+  );
+
   return (
     <div
       className="messages messages-full"
       ref={containerRef}
       onScroll={updateAutoScroll}
     >
-      {groupedItems.map((entry) => {
-        if (entry.kind === "toolGroup") {
-          const { group } = entry;
-          const isCollapsed = collapsedToolGroups.has(group.id);
-          const summaryParts = [
-            formatCount(group.toolCount, "tool call", "tool calls"),
-          ];
-          if (group.messageCount > 0) {
-            summaryParts.push(formatCount(group.messageCount, "message", "messages"));
-          }
-          const summaryText = summaryParts.join(", ");
-          const groupBodyId = `tool-group-${group.id}`;
-          const ChevronIcon = isCollapsed ? ChevronDown : ChevronUp;
-          return (
-            <div
-              key={`tool-group-${group.id}`}
-              className={`tool-group ${isCollapsed ? "tool-group-collapsed" : ""}`}
-            >
-              <div className="tool-group-header">
-                <button
-                  type="button"
-                  className="tool-group-toggle"
-                  onClick={() => toggleToolGroup(group.id)}
-                  aria-expanded={!isCollapsed}
-                  aria-controls={groupBodyId}
-                  aria-label={isCollapsed ? "Expand tool calls" : "Collapse tool calls"}
-                >
-                  <span className="tool-group-chevron" aria-hidden>
-                    <ChevronIcon size={14} />
-                  </span>
-                  <span className="tool-group-summary">{summaryText}</span>
-                </button>
+      {shouldVirtualize ? (
+        <div
+          className="messages-virtual"
+          style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const entry = groupedItems[virtualRow.index];
+            const rowId = getEntryKey(entry);
+            return (
+              <div
+                key={virtualRow.key}
+                ref={setVirtualRowRef(rowId)}
+                data-index={virtualRow.index}
+                className="messages-virtual-row"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {renderEntry(entry)}
               </div>
-              {!isCollapsed && (
-                <div className="tool-group-body" id={groupBodyId}>
-                  {group.items.map(renderItem)}
-                </div>
-              )}
-            </div>
-          );
-        }
-        return renderItem(entry.item);
-      })}
+            );
+          })}
+        </div>
+      ) : (
+        groupedItems.map(renderEntry)
+      )}
       {planFollowupNode}
       {userInputNode}
       <WorkingIndicator
