@@ -1,9 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  getAppBuildType,
-  isMobileRuntime,
-  type AppBuildType,
-} from "@services/tauri";
+import { getAppBuildType, type AppBuildType } from "@services/tauri";
 import { useUpdater } from "@/features/update/hooks/useUpdater";
 import { SettingsSection } from "@/features/design-system/components/settings/SettingsPrimitives";
 
@@ -23,7 +19,7 @@ function formatBytes(value: number) {
 
 export function SettingsAboutSection() {
   const [appBuildType, setAppBuildType] = useState<AppBuildType | "unknown">("unknown");
-  const [updaterEnabled, setUpdaterEnabled] = useState(false);
+  const updaterEnabled = false;
   const { state: updaterState, checkForUpdates, startUpdate } = useUpdater({
     enabled: updaterEnabled,
   });
@@ -43,27 +39,6 @@ export function SettingsAboutSection() {
       }
     };
     void loadBuildType();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const detectRuntime = async () => {
-      try {
-        const mobileRuntime = await isMobileRuntime();
-        if (active) {
-          setUpdaterEnabled(!mobileRuntime);
-        }
-      } catch {
-        if (active) {
-          // In non-Tauri previews we still want local desktop-like behavior.
-          setUpdaterEnabled(true);
-        }
-      }
-    };
-    void detectRuntime();
     return () => {
       active = false;
     };
@@ -101,7 +76,7 @@ export function SettingsAboutSection() {
         </div>
         {!updaterEnabled && (
           <div className="settings-help">
-            Updates are unavailable in this runtime.
+            Updates are disabled in this build.
           </div>
         )}
 
