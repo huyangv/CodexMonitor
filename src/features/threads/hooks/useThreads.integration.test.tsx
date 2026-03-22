@@ -1099,6 +1099,43 @@ describe("useThreads UX integration", () => {
     expect(result.current.isSubagentThread("ws-1", "thread-child-live")).toBe(true);
   });
 
+  it("keeps live subagent nickname and role in sidebar summaries from thread started", () => {
+    const { result } = renderHook(() =>
+      useThreads({
+        activeWorkspace: workspace,
+        onWorkspaceConnected: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      handlers?.onThreadStarted?.("ws-1", {
+        id: "thread-child-live-meta",
+        preview: "Review helper",
+        agent_nickname: "Atlas",
+        agent_role: "reviewer",
+        source: {
+          subAgent: {
+            thread_spawn: {
+              parent_thread_id: "thread-parent-live",
+              depth: 1,
+            },
+          },
+        },
+      });
+    });
+
+    expect(
+      result.current.threadsByWorkspace["ws-1"]?.find(
+        (thread) => thread.id === "thread-child-live-meta",
+      ),
+    ).toMatchObject({
+      id: "thread-child-live-meta",
+      isSubagent: true,
+      subagentNickname: "Atlas",
+      subagentRole: "reviewer",
+    });
+  });
+
   it("classifies live spawned threads from top-level parent thread metadata", () => {
     const { result } = renderHook(() =>
       useThreads({

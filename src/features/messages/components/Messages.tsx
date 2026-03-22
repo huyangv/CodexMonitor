@@ -473,74 +473,76 @@ export const Messages = memo(function Messages({
       ref={containerRef}
       onScroll={updateAutoScroll}
     >
-      {groupedItems.map((entry) => {
-        if (entry.kind === "toolGroup") {
-          const { group } = entry;
-          const isCollapsed = collapsedToolGroups.has(group.id);
-          const summaryParts = [
-            formatCount(group.toolCount, "tool call", "tool calls"),
-          ];
-          if (group.messageCount > 0) {
-            summaryParts.push(formatCount(group.messageCount, "message", "messages"));
-          }
-          const summaryText = summaryParts.join(", ");
-          const groupBodyId = `tool-group-${group.id}`;
-          const ChevronIcon = isCollapsed ? ChevronDown : ChevronUp;
-          return (
-            <div
-              key={`tool-group-${group.id}`}
-              className={`tool-group ${isCollapsed ? "tool-group-collapsed" : ""}`}
-            >
-              <div className="tool-group-header">
-                <button
-                  type="button"
-                  className="tool-group-toggle"
-                  onClick={() => toggleToolGroup(group.id)}
-                  aria-expanded={!isCollapsed}
-                  aria-controls={groupBodyId}
-                  aria-label={isCollapsed ? "Expand tool calls" : "Collapse tool calls"}
-                >
-                  <span className="tool-group-chevron" aria-hidden>
-                    <ChevronIcon size={14} />
-                  </span>
-                  <span className="tool-group-summary">{summaryText}</span>
-                </button>
-              </div>
-              {!isCollapsed && (
-                <div className="tool-group-body" id={groupBodyId}>
-                  {group.items.map(renderItem)}
+      <div className="messages-inner">
+        {groupedItems.map((entry) => {
+          if (entry.kind === "toolGroup") {
+            const { group } = entry;
+            const isCollapsed = collapsedToolGroups.has(group.id);
+            const summaryParts = [
+              formatCount(group.toolCount, "tool call", "tool calls"),
+            ];
+            if (group.messageCount > 0) {
+              summaryParts.push(formatCount(group.messageCount, "message", "messages"));
+            }
+            const summaryText = summaryParts.join(", ");
+            const groupBodyId = `tool-group-${group.id}`;
+            const ChevronIcon = isCollapsed ? ChevronDown : ChevronUp;
+            return (
+              <div
+                key={`tool-group-${group.id}`}
+                className={`tool-group ${isCollapsed ? "tool-group-collapsed" : ""}`}
+              >
+                <div className="tool-group-header">
+                  <button
+                    type="button"
+                    className="tool-group-toggle"
+                    onClick={() => toggleToolGroup(group.id)}
+                    aria-expanded={!isCollapsed}
+                    aria-controls={groupBodyId}
+                    aria-label={isCollapsed ? "Expand tool calls" : "Collapse tool calls"}
+                  >
+                    <span className="tool-group-chevron" aria-hidden>
+                      <ChevronIcon size={14} />
+                    </span>
+                    <span className="tool-group-summary">{summaryText}</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          );
-        }
-        return renderItem(entry.item);
-      })}
-      {planFollowupNode}
-      {userInputNode}
-      <WorkingIndicator
-        isThinking={isThinking}
-        processingStartedAt={processingStartedAt}
-        lastDurationMs={lastDurationMs}
-        hasItems={items.length > 0}
-        reasoningLabel={latestReasoningLabel}
-        showPollingFetchStatus={showPollingFetchStatus}
-        pollingIntervalMs={pollingIntervalMs}
-      />
-      {!items.length && !userInputNode && !isThinking && !isLoadingMessages && (
-        <div className="empty messages-empty">
-          {threadId ? "Send a prompt to the agent." : "Send a prompt to start a new agent."}
-        </div>
-      )}
-      {!items.length && !userInputNode && !isThinking && isLoadingMessages && (
-        <div className="empty messages-empty">
-          <div className="messages-loading-indicator" role="status" aria-live="polite">
-            <span className="working-spinner" aria-hidden />
-            <span className="messages-loading-label">Loading…</span>
+                {!isCollapsed && (
+                  <div className="tool-group-body" id={groupBodyId}>
+                    {group.items.map(renderItem)}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return renderItem(entry.item);
+        })}
+        {planFollowupNode}
+        {userInputNode}
+        <WorkingIndicator
+          isThinking={isThinking}
+          processingStartedAt={processingStartedAt}
+          lastDurationMs={lastDurationMs}
+          hasItems={items.length > 0}
+          reasoningLabel={latestReasoningLabel}
+          showPollingFetchStatus={showPollingFetchStatus}
+          pollingIntervalMs={pollingIntervalMs}
+        />
+        {!items.length && !userInputNode && !isThinking && !isLoadingMessages && (
+          <div className="empty messages-empty">
+            {threadId ? "Send a prompt to the agent." : "Send a prompt to start a new agent."}
           </div>
-        </div>
-      )}
-      <div ref={bottomRef} />
+        )}
+        {!items.length && !userInputNode && !isThinking && isLoadingMessages && (
+          <div className="empty messages-empty">
+            <div className="messages-loading-indicator" role="status" aria-live="polite">
+              <span className="working-spinner" aria-hidden />
+              <span className="messages-loading-label">Loading…</span>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 });

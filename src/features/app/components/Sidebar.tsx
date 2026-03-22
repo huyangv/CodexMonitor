@@ -28,6 +28,13 @@ import { WorktreeSection } from "./WorktreeSection";
 import { PinnedThreadList } from "./PinnedThreadList";
 import { WorkspaceCard } from "./WorkspaceCard";
 import { WorkspaceGroup } from "./WorkspaceGroup";
+import {
+  countRootRows,
+  getVisibleThreadListState,
+  splitRowsByRoot,
+  threadMatchesQuery,
+  workspaceMatchesQuery,
+} from "./threadSearchUtils";
 import { useCollapsedGroups } from "../hooks/useCollapsedGroups";
 import { useMenuController } from "../hooks/useMenuController";
 import { useSidebarMenus } from "../hooks/useSidebarMenus";
@@ -55,6 +62,71 @@ type FlatThreadRow = {
   workspaceId: string;
   workspaceName: string;
 };
+
+type FlatThreadRootGroup = {
+  rootTimestamp: number;
+  workspaceName: string;
+  workspaceId: string;
+  rootIndex: number;
+  rows: FlatThreadRow[];
+};
+
+type ThreadBucket = {
+  id: "now" | "today" | "yesterday" | "week" | "older";
+  label: string;
+  rows: FlatThreadRow[];
+};
+
+function getThreadBucketId(timestamp: number, nowMs: number): ThreadBucket["id"] {
+  const now = new Date(nowMs);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
+
+  if (timestamp >= nowMs - 60 * 60 * 1000) {
+    return "now";
+  }
+  if (timestamp >= startOfToday) {
+    return "today";
+  }
+  if (timestamp >= startOfYesterday) {
+    return "yesterday";
+  }
+  if (timestamp >= startOfWeek) {
+    return "week";
+  }
+  return "older";
+}
+
+function groupFlatThreadRowsByTimeBucket(
+  groups: FlatThreadRootGroup[],
+  nowMs: number,
+): ThreadBucket[] {
+  const bucketLabels: Record<ThreadBucket["id"], string> = {
+    now: "Now",
+    today: "Earlier today",
+    yesterday: "Yesterday",
+    week: "This week",
+    older: "Older",
+  };
+  const order: ThreadBucket["id"][] = ["now", "today", "yesterday", "week", "older"];
+  const bucketMap = new Map<ThreadBucket["id"], FlatThreadRow[]>();
+
+  groups.forEach((group) => {
+    const bucketId = getThreadBucketId(group.rootTimestamp, nowMs);
+    const list = bucketMap.get(bucketId) ?? [];
+    list.push(...group.rows);
+    bucketMap.set(bucketId, list);
+  });
+
+  return order
+    .filter((bucketId) => (bucketMap.get(bucketId) ?? []).length > 0)
+    .map((bucketId) => ({
+      id: bucketId,
+      label: bucketLabels[bucketId],
+      rows: bucketMap.get(bucketId) ?? [],
+    }));
+}
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
@@ -230,6 +302,7 @@ export const Sidebar = memo(function Sidebar({
   } = getUsageLabels(accountRateLimits, usageShowRemaining);
   const debouncedQuery = useDebouncedValue(searchQuery, 150);
   const normalizedQuery = debouncedQuery.trim().toLowerCase();
+  const isSearchActive = Boolean(normalizedQuery);
   const pendingUserInputKeys = useMemo(
     () =>
       new Set(
@@ -246,13 +319,47 @@ export const Sidebar = memo(function Sidebar({
 
   const isWorkspaceMatch = useCallback(
     (workspace: WorkspaceInfo) => {
-      if (!normalizedQuery) {
-        return true;
-      }
-      return workspace.name.toLowerCase().includes(normalizedQuery);
+      return workspaceMatchesQuery(workspace.name, normalizedQuery);
     },
     [normalizedQuery],
   );
+  const workspaceHasMatchingThreadById = useMemo(() => {
+    if (!isSearchActive) {
+      return new Map<string, boolean>();
+    }
+
+    const result = new Map<string, boolean>();
+    workspaces.forEach((workspace) => {
+      const threads = threadsByWorkspace[workspace.id] ?? [];
+      result.set(
+        workspace.id,
+        threads.some((thread) => threadMatchesQuery(thread, workspace.name, normalizedQuery)),
+      );
+    });
+    return result;
+  }, [isSearchActive, normalizedQuery, threadsByWorkspace, workspaces]);
+  const workspaceVisibleDuringSearchById = useMemo(() => {
+    if (!isSearchActive) {
+      return new Map<string, boolean>();
+    }
+
+    const result = new Map<string, boolean>();
+    workspaces.forEach((workspace) => {
+      result.set(
+        workspace.id,
+        isWorkspaceMatch(workspace) ||
+          Boolean(workspaceHasMatchingThreadById.get(workspace.id)) ||
+          Boolean(threadListCursorByWorkspace[workspace.id]),
+      );
+    });
+    return result;
+  }, [
+    isSearchActive,
+    isWorkspaceMatch,
+    workspaceHasMatchingThreadById,
+    threadListCursorByWorkspace,
+    workspaces,
+  ]);
 
   const renderHighlightedName = useCallback(
     (name: string) => {
@@ -306,11 +413,16 @@ export const Sidebar = memo(function Sidebar({
     const groups: Array<{
       pinTime: number;
       workspaceId: string;
+      workspaceName: string;
       rows: ThreadRow[];
     }> = [];
 
     workspaces.forEach((workspace) => {
-      if (!isWorkspaceMatch(workspace)) {
+      if (
+        isSearchActive &&
+        !isWorkspaceMatch(workspace) &&
+        !workspaceHasMatchingThreadById.get(workspace.id)
+      ) {
         return;
       }
       const threads = threadsByWorkspace[workspace.id] ?? [];
@@ -327,36 +439,29 @@ export const Sidebar = memo(function Sidebar({
       if (!pinnedRows.length) {
         return;
       }
-      let currentRows: ThreadRow[] = [];
-      let currentPinTime: number | null = null;
-
-      pinnedRows.forEach((row) => {
-        if (row.depth === 0) {
-          if (currentRows.length && currentPinTime !== null) {
-            groups.push({
-              pinTime: currentPinTime,
-              workspaceId: workspace.id,
-              rows: currentRows,
-            });
-          }
-          currentRows = [row];
-          currentPinTime = getPinTimestamp(workspace.id, row.thread.id);
-        } else {
-          currentRows.push(row);
+      splitRowsByRoot(pinnedRows).forEach((group) => {
+        const pinTime = getPinTimestamp(workspace.id, group.root.thread.id);
+        if (pinTime === null) {
+          return;
         }
-      });
-
-      if (currentRows.length && currentPinTime !== null) {
         groups.push({
-          pinTime: currentPinTime,
+          pinTime,
           workspaceId: workspace.id,
-          rows: currentRows,
+          workspaceName: workspace.name,
+          rows: group.rows,
         });
-      }
+      });
     });
 
     return groups
       .sort((a, b) => a.pinTime - b.pinTime)
+      .filter((group) =>
+        normalizedQuery
+          ? group.rows.some((row) =>
+              threadMatchesQuery(row.thread, group.workspaceName, normalizedQuery),
+            )
+          : true,
+      )
       .flatMap((group) =>
         group.rows.map((row) => ({
           ...row,
@@ -369,25 +474,43 @@ export const Sidebar = memo(function Sidebar({
     getThreadRows,
     getPinTimestamp,
     pinnedThreadsVersion,
+    isSearchActive,
     isWorkspaceMatch,
+    normalizedQuery,
+    workspaceHasMatchingThreadById,
   ]);
 
-  const cloneSourceIdsMatchingQuery = useMemo(() => {
-    if (!normalizedQuery) {
-      return new Set<string>();
+  const { cloneSourceIdsMatchingQuery, worktreeParentIdsMatchingQuery } = useMemo(() => {
+    const cloneSourceIds = new Set<string>();
+    const worktreeParentIds = new Set<string>();
+    if (!isSearchActive) {
+      return {
+        cloneSourceIdsMatchingQuery: cloneSourceIds,
+        worktreeParentIdsMatchingQuery: worktreeParentIds,
+      };
     }
-    const ids = new Set<string>();
+
     workspaces.forEach((workspace) => {
-      const sourceId = workspace.settings.cloneSourceWorkspaceId?.trim();
-      if (!sourceId) {
+      if (!workspaceVisibleDuringSearchById.get(workspace.id)) {
         return;
       }
-      if (isWorkspaceMatch(workspace)) {
-        ids.add(sourceId);
+
+      const sourceId = workspace.settings.cloneSourceWorkspaceId?.trim();
+      if (sourceId) {
+        cloneSourceIds.add(sourceId);
+      }
+
+      const parentId = workspace.parentId?.trim();
+      if ((workspace.kind ?? "main") === "worktree" && parentId) {
+        worktreeParentIds.add(parentId);
       }
     });
-    return ids;
-  }, [isWorkspaceMatch, normalizedQuery, workspaces]);
+
+    return {
+      cloneSourceIdsMatchingQuery: cloneSourceIds,
+      worktreeParentIdsMatchingQuery: worktreeParentIds,
+    };
+  }, [isSearchActive, workspaceVisibleDuringSearchById, workspaces]);
 
   const filteredGroupedWorkspaces = useMemo(
     () =>
@@ -396,12 +519,20 @@ export const Sidebar = memo(function Sidebar({
           ...group,
           workspaces: group.workspaces.filter(
             (workspace) =>
-              isWorkspaceMatch(workspace) ||
-              cloneSourceIdsMatchingQuery.has(workspace.id),
+              !isSearchActive ||
+              workspaceVisibleDuringSearchById.get(workspace.id) ||
+              cloneSourceIdsMatchingQuery.has(workspace.id) ||
+              worktreeParentIdsMatchingQuery.has(workspace.id),
           ),
         }))
         .filter((group) => group.workspaces.length > 0),
-    [cloneSourceIdsMatchingQuery, groupedWorkspaces, isWorkspaceMatch],
+    [
+      cloneSourceIdsMatchingQuery,
+      groupedWorkspaces,
+      isSearchActive,
+      worktreeParentIdsMatchingQuery,
+      workspaceVisibleDuringSearchById,
+    ],
   );
 
   const getSortTimestamp = useCallback(
@@ -449,7 +580,7 @@ export const Sidebar = memo(function Sidebar({
         const visibleClones =
           normalizedQuery && !isWorkspaceMatch(workspace)
             ? (cloneWorkspacesBySourceId.get(workspace.id) ?? []).filter((clone) =>
-                isWorkspaceMatch(clone),
+                workspaceVisibleDuringSearchById.get(clone.id),
               )
             : (cloneWorkspacesBySourceId.get(workspace.id) ?? []);
         let hasThreads = rootThreads.length > 0;
@@ -477,6 +608,7 @@ export const Sidebar = memo(function Sidebar({
     isWorkspaceMatch,
     normalizedQuery,
     threadsByWorkspace,
+    workspaceVisibleDuringSearchById,
     workspaces,
   ]);
 
@@ -507,17 +639,12 @@ export const Sidebar = memo(function Sidebar({
     }));
   }, [filteredGroupedWorkspaces, threadListOrganizeMode, workspaceActivityById]);
 
-  const flatThreadRows = useMemo(() => {
+  const flatThreadRootGroups = useMemo(() => {
     if (threadListOrganizeMode !== "threads_only") {
-      return [] as FlatThreadRow[];
+      return [] as FlatThreadRootGroup[];
     }
 
-    const rootGroups: Array<{
-      rootTimestamp: number;
-      workspaceName: string;
-      rootIndex: number;
-      rows: FlatThreadRow[];
-    }> = [];
+    const rootGroups: FlatThreadRootGroup[] = [];
 
     filteredGroupedWorkspaces.forEach((group) => {
       group.workspaces.forEach((workspace) => {
@@ -536,44 +663,19 @@ export const Sidebar = memo(function Sidebar({
           return;
         }
 
-        let currentRows: FlatThreadRow[] = [];
-        let currentRootTimestamp = 0;
-        let currentRootIndex = 0;
-        unpinnedRows.forEach((row, rowIndex) => {
-          if (row.depth === 0) {
-            if (currentRows.length > 0) {
-              rootGroups.push({
-                rootTimestamp: currentRootTimestamp,
-                workspaceName: workspace.name,
-                rootIndex: currentRootIndex,
-                rows: currentRows,
-              });
-            }
-            currentRows = [
-              {
-                ...row,
-                workspaceId: workspace.id,
-                workspaceName: workspace.name,
-              },
-            ];
-            currentRootTimestamp = getSortTimestamp(row.thread);
-            currentRootIndex = rowIndex;
-            return;
-          }
-          currentRows.push({
-            ...row,
-            workspaceId: workspace.id,
+        splitRowsByRoot(unpinnedRows).forEach((group) => {
+          rootGroups.push({
+            rootTimestamp: getSortTimestamp(group.root.thread),
             workspaceName: workspace.name,
+            workspaceId: workspace.id,
+            rootIndex: group.rootIndex,
+            rows: group.rows.map((row) => ({
+              ...row,
+              workspaceId: workspace.id,
+              workspaceName: workspace.name,
+            })),
           });
         });
-        if (currentRows.length > 0) {
-          rootGroups.push({
-            rootTimestamp: currentRootTimestamp,
-            workspaceName: workspace.name,
-            rootIndex: currentRootIndex,
-            rows: currentRows,
-          });
-        }
       });
     });
 
@@ -589,16 +691,31 @@ export const Sidebar = memo(function Sidebar({
         }
         return a.rootIndex - b.rootIndex;
       })
-      .flatMap((group) => group.rows);
+      .filter((group) =>
+        normalizedQuery
+          ? group.rows.some((row) =>
+              threadMatchesQuery(row.thread, row.workspaceName, normalizedQuery),
+            )
+          : true,
+      );
   }, [
     filteredGroupedWorkspaces,
     getPinTimestamp,
     getSortTimestamp,
     getThreadRows,
+    normalizedQuery,
     pinnedThreadsVersion,
     threadListOrganizeMode,
     threadsByWorkspace,
   ]);
+  const flatThreadRows = useMemo(
+    () => flatThreadRootGroups.flatMap((group) => group.rows),
+    [flatThreadRootGroups],
+  );
+  const threadBuckets = useMemo(
+    () => groupFlatThreadRowsByTimeBucket(flatThreadRootGroups, Date.now()),
+    [flatThreadRootGroups],
+  );
 
   const scrollFadeDeps = useMemo(
     () => [
@@ -669,7 +786,6 @@ export const Sidebar = memo(function Sidebar({
     },
     [onAddAgent],
   );
-  const isSearchActive = Boolean(normalizedQuery);
 
   const worktreesByParent = useMemo(() => {
     const worktrees = new Map<string, WorkspaceInfo[]>();
@@ -752,6 +868,7 @@ export const Sidebar = memo(function Sidebar({
     },
     [],
   );
+  const pinnedRootCount = useMemo(() => countRootRows(pinnedThreadRows), [pinnedThreadRows]);
 
   useEffect(() => {
     if (!addMenuAnchor) {
@@ -814,8 +931,8 @@ export const Sidebar = memo(function Sidebar({
             className="sidebar-search-input"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search projects"
-            aria-label="Search projects"
+            placeholder="Search conversations"
+            aria-label="Search conversations"
             data-tauri-drag-region="false"
             autoFocus
           />
@@ -859,8 +976,9 @@ export const Sidebar = memo(function Sidebar({
         <div className="workspace-list">
           {pinnedThreadRows.length > 0 && (
             <div className="pinned-section">
-              <div className="workspace-group-header">
-                <div className="workspace-group-label">Pinned</div>
+              <div className="sidebar-section-header">
+                <div className="sidebar-section-title">Pinned conversations</div>
+                <div className="sidebar-section-count">{pinnedRootCount}</div>
               </div>
               <PinnedThreadList
                 rows={pinnedThreadRows}
@@ -873,15 +991,15 @@ export const Sidebar = memo(function Sidebar({
                 isThreadPinned={isThreadPinned}
                 onSelectThread={onSelectThread}
                 onShowThreadMenu={showThreadMenu}
-                getWorkspaceLabel={isThreadsOnlyMode ? getWorkspaceLabel : undefined}
+                getWorkspaceLabel={getWorkspaceLabel}
               />
             </div>
           )}
           {isThreadsOnlyMode
             ? groupedWorkspacesForRender.length > 0 && (
                 <div className="workspace-group">
-                  <div className="workspace-group-header workspace-group-header-all-threads">
-                    <div className="workspace-group-label">All threads</div>
+                  <div className="sidebar-section-header workspace-group-header-all-threads">
+                    <div className="sidebar-section-title">Recent conversations</div>
                     <button
                       className="ghost all-threads-add"
                       onClick={handleAllThreadsAddMenuToggle}
@@ -894,21 +1012,26 @@ export const Sidebar = memo(function Sidebar({
                       <Plus aria-hidden />
                     </button>
                   </div>
-                  {flatThreadRows.length > 0 && (
-                    <PinnedThreadList
-                      rows={flatThreadRows}
-                      activeWorkspaceId={activeWorkspaceId}
-                      activeThreadId={activeThreadId}
-                      threadStatusById={threadStatusById}
-                      pendingUserInputKeys={pendingUserInputKeys}
-                      getThreadTime={getThreadTime}
-                      getThreadArgsBadge={getThreadArgsBadge}
-                      isThreadPinned={isThreadPinned}
-                      onSelectThread={onSelectThread}
-                      onShowThreadMenu={showThreadMenu}
-                      getWorkspaceLabel={getWorkspaceLabel}
-                    />
-                  )}
+                  {threadBuckets.map((bucket) => (
+                    <div key={bucket.id} className="thread-bucket">
+                      <div className="thread-bucket-header">
+                        <div className="thread-bucket-label">{bucket.label}</div>
+                      </div>
+                      <PinnedThreadList
+                        rows={bucket.rows}
+                        activeWorkspaceId={activeWorkspaceId}
+                        activeThreadId={activeThreadId}
+                        threadStatusById={threadStatusById}
+                        pendingUserInputKeys={pendingUserInputKeys}
+                        getThreadTime={getThreadTime}
+                        getThreadArgsBadge={getThreadArgsBadge}
+                        isThreadPinned={isThreadPinned}
+                        onSelectThread={onSelectThread}
+                        onShowThreadMenu={showThreadMenu}
+                        getWorkspaceLabel={getWorkspaceLabel}
+                      />
+                    </div>
+                  ))}
                   {allThreadsAddMenuAnchor &&
                     createPortal(
                       <PopoverSurface
@@ -961,20 +1084,32 @@ export const Sidebar = memo(function Sidebar({
                       const threads = threadsByWorkspace[entry.id] ?? [];
                       const isCollapsed = entry.settings.sidebarCollapsed;
                       const isExpanded = expandedWorkspaces.has(entry.id);
+                      const workspaceMatchesSearch = isWorkspaceMatch(entry);
+                      const searchExpanded = isExpanded || isSearchActive;
                       const {
                         unpinnedRows,
                         totalRoots: totalThreadRoots,
                       } = getThreadRows(
                         threads,
-                        isExpanded,
+                        searchExpanded,
                         entry.id,
                         getPinTimestamp,
                         pinnedThreadsVersion,
                       );
                       const nextCursor =
                         threadListCursorByWorkspace[entry.id] ?? null;
+                      const {
+                        visibleRows: filteredThreadRows,
+                        displayRootCount: displayThreadRootCount,
+                      } = getVisibleThreadListState({
+                        rows: unpinnedRows,
+                        totalRoots: totalThreadRoots,
+                        workspaceName: entry.name,
+                        query: normalizedQuery,
+                        isSearchActive,
+                      });
                       const showThreadList =
-                        threads.length > 0 || Boolean(nextCursor);
+                        filteredThreadRows.length > 0 || Boolean(nextCursor);
                       const isLoadingThreads =
                         threadListLoadingByWorkspace[entry.id] ?? false;
                       const showThreadLoader =
@@ -982,10 +1117,15 @@ export const Sidebar = memo(function Sidebar({
                       const isPaging = threadListPagingByWorkspace[entry.id] ?? false;
                       const clones = clonesBySource.get(entry.id) ?? [];
                       const visibleClones =
-                        isSearchActive && !isWorkspaceMatch(entry)
-                          ? clones.filter((clone) => isWorkspaceMatch(clone))
+                        isSearchActive && !workspaceMatchesSearch
+                          ? clones.filter((clone) => workspaceVisibleDuringSearchById.get(clone.id))
                           : clones;
-                      const worktrees = worktreesByParent.get(entry.id) ?? [];
+                      const worktrees =
+                        isSearchActive && !workspaceMatchesSearch
+                          ? (worktreesByParent.get(entry.id) ?? []).filter((worktree) =>
+                              workspaceVisibleDuringSearchById.get(worktree.id),
+                            )
+                          : (worktreesByParent.get(entry.id) ?? []);
                       const addMenuOpen = addMenuAnchor?.workspaceId === entry.id;
                       const isDraftNewAgent = newAgentDraftWorkspaceId === entry.id;
                       const isDraftRowActive =
@@ -1002,6 +1142,15 @@ export const Sidebar = memo(function Sidebar({
                           key={entry.id}
                           workspace={entry}
                           workspaceName={renderHighlightedName(entry.name)}
+                          summary={
+                            displayThreadRootCount > 0
+                              ? `${displayThreadRootCount} conversation${
+                                  displayThreadRootCount === 1 ? "" : "s"
+                                }${
+                                  threads[0] ? ` · Updated ${getThreadTime(threads[0])}` : ""
+                                }`
+                              : "No conversations yet"
+                          }
                           isActive={entry.id === activeWorkspaceId}
                           isCollapsed={isCollapsed}
                           addMenuOpen={addMenuOpen}
@@ -1075,7 +1224,11 @@ export const Sidebar = memo(function Sidebar({
                               }}
                             >
                               <span className={`thread-status ${draftStatusClass}`} aria-hidden />
-                              <span className="thread-name">New Agent</span>
+                              <div className="thread-content">
+                                <div className="thread-headline">
+                                  <span className="thread-name">New Agent</span>
+                                </div>
+                              </div>
                             </div>
                           )}
                           {visibleClones.length > 0 && (
@@ -1105,6 +1258,8 @@ export const Sidebar = memo(function Sidebar({
                               onShowWorktreeMenu={showCloneMenu}
                               onToggleExpanded={handleToggleExpanded}
                               onLoadOlderThreads={onLoadOlderThreads}
+                              searchQuery={normalizedQuery}
+                              isSearchActive={isSearchActive}
                               sectionLabel="Clone agents"
                               sectionIcon={
                                 <Copy className="worktree-header-icon" aria-hidden />
@@ -1139,15 +1294,18 @@ export const Sidebar = memo(function Sidebar({
                               onShowWorktreeMenu={showWorktreeMenu}
                               onToggleExpanded={handleToggleExpanded}
                               onLoadOlderThreads={onLoadOlderThreads}
+                              searchQuery={normalizedQuery}
+                              isSearchActive={isSearchActive}
                             />
                           )}
                           {showThreadList && (
                             <ThreadList
                               workspaceId={entry.id}
                               pinnedRows={[]}
-                              unpinnedRows={unpinnedRows}
-                              totalThreadRoots={totalThreadRoots}
-                              isExpanded={isExpanded}
+                              unpinnedRows={filteredThreadRows}
+                              totalThreadRoots={displayThreadRootCount}
+                              isExpanded={searchExpanded}
+                              showExpandToggle={!isSearchActive}
                               nextCursor={nextCursor}
                               isPaging={isPaging}
                               activeWorkspaceId={activeWorkspaceId}
@@ -1173,7 +1331,7 @@ export const Sidebar = memo(function Sidebar({
           {!groupedWorkspacesForRender.length && (
             <div className="empty">
               {isSearchActive
-                ? "No projects match your search."
+                ? "No conversations match your search."
                 : "Add a workspace to start."}
             </div>
           )}
@@ -1181,7 +1339,7 @@ export const Sidebar = memo(function Sidebar({
             groupedWorkspacesForRender.length > 0 &&
             flatThreadRows.length === 0 &&
             pinnedThreadRows.length === 0 && (
-              <div className="empty">No threads yet.</div>
+              <div className="empty">No conversations yet.</div>
             )}
         </div>
       </div>

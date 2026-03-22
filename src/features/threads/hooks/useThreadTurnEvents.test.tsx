@@ -238,6 +238,38 @@ describe("useThreadTurnEvents", () => {
     );
   });
 
+  it("hydrates subagent nickname and role from thread started metadata", () => {
+    const { result, dispatch } = makeOptions();
+
+    act(() => {
+      result.current.onThreadStarted("ws-1", {
+        id: "thread-subagent-meta",
+        preview: "Review helper",
+        updatedAt: 1_700_000_000_350,
+        agent_nickname: "Atlas",
+        agent_role: "reviewer",
+        source: {
+          subAgent: {
+            thread_spawn: {
+              parent_thread_id: "thread-parent",
+            },
+          },
+        },
+      });
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "mergeThreadSummary",
+      workspaceId: "ws-1",
+      threadId: "thread-subagent-meta",
+      patch: {
+        isSubagent: true,
+        subagentNickname: "Atlas",
+        subagentRole: "reviewer",
+      },
+    });
+  });
+
   it("applies thread name updates when no custom name exists", () => {
     const { result, dispatch, getCustomName } = makeOptions();
     getCustomName.mockReturnValue(undefined);

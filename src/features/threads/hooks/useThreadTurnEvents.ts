@@ -45,6 +45,32 @@ function normalizeThreadStatusType(status: Record<string, unknown>): string {
     .replace(/[\s_-]/g, "");
 }
 
+function getLiveThreadSubagentSummaryPatch(thread: Record<string, unknown>) {
+  const nickname = asString(
+    thread.agentNickname ?? thread.agent_nickname ?? "",
+  ).trim();
+  const role = asString(
+    thread.agentRole ??
+      thread.agent_role ??
+      thread.agentType ??
+      thread.agent_type ??
+      "",
+  ).trim();
+  const hasParentThread = Boolean(getParentThreadIdFromThread(thread));
+  const isSubagent =
+    isSubagentThreadSource(thread.source) || hasParentThread || Boolean(nickname || role);
+
+  if (!isSubagent) {
+    return null;
+  }
+
+  return {
+    isSubagent: true as const,
+    ...(nickname ? { subagentNickname: nickname } : {}),
+    ...(role ? { subagentRole: role } : {}),
+  };
+}
+
 export function useThreadTurnEvents({
   dispatch,
   planByThreadRef,
@@ -135,6 +161,15 @@ export function useThreadTurnEvents({
         return;
       }
       dispatch({ type: "ensureThread", workspaceId, threadId });
+      const subagentSummaryPatch = getLiveThreadSubagentSummaryPatch(thread);
+      if (subagentSummaryPatch) {
+        dispatch({
+          type: "mergeThreadSummary",
+          workspaceId,
+          threadId,
+          patch: subagentSummaryPatch,
+        });
+      }
       const timestamp = getThreadTimestamp(thread);
       const activityTimestamp = timestamp > 0 ? timestamp : Date.now();
       recordThreadActivity(workspaceId, threadId, activityTimestamp);

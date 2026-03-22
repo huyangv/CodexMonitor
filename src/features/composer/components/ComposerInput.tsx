@@ -534,6 +534,68 @@ export function ComposerInput({
             onDrop={handleDrop}
             onPaste={handleTextareaPaste}
           />
+          <div className="composer-input-actions">
+            {onToggleExpand && (
+              <button
+                className={`composer-action composer-action--expand${
+                  isExpanded ? " is-active" : ""
+                }`}
+                onClick={onToggleExpand}
+                disabled={disabled}
+                aria-label={isExpanded ? "Collapse input" : "Expand input"}
+                title={isExpanded ? "Collapse input" : "Expand input"}
+              >
+                {isExpanded ? <ChevronDown aria-hidden /> : <ChevronUp aria-hidden />}
+              </button>
+            )}
+            <button
+              className={`composer-action composer-action--mic${
+                isDictationBusy ? " is-active" : ""
+              }${isDictationProcessing ? " is-processing is-stop" : ""}${
+                micDisabled ? " is-disabled" : ""
+              }`}
+              onClick={handleMicClick}
+              disabled={micDisabled}
+              aria-label={micAriaLabel}
+              title={micTitle}
+            >
+              {isDictationProcessing ? (
+                <X aria-hidden />
+              ) : isDictating ? (
+                <Square aria-hidden />
+              ) : (
+                <Mic aria-hidden />
+              )}
+            </button>
+            <button
+              className={`composer-action${canStop ? " is-stop" : " is-send"}${
+                canStop && isProcessing ? " is-loading" : ""
+              }`}
+              onClick={handleActionClick}
+              disabled={(disabled && !canStop) || isDictationBusy || (!canStop && !canSend)}
+              aria-label={canStop ? "Stop" : sendLabel}
+              title={canStop ? "Stop" : sendLabel}
+            >
+              {canStop ? (
+                <>
+                  <span className="composer-action-stop-square" aria-hidden />
+                  {isProcessing && (
+                    <span className="composer-action-spinner" aria-hidden />
+                  )}
+                </>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    d="M12 5l6 6m-6-6L6 11m6-6v14"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
         {isDictationBusy && (
           <DictationWaveform
@@ -691,66 +753,6 @@ export function ComposerInput({
           </PopoverSurface>
         )}
       </div>
-      {onToggleExpand && (
-        <button
-          className={`composer-action composer-action--expand${
-            isExpanded ? " is-active" : ""
-          }`}
-          onClick={onToggleExpand}
-          disabled={disabled}
-          aria-label={isExpanded ? "Collapse input" : "Expand input"}
-          title={isExpanded ? "Collapse input" : "Expand input"}
-        >
-          {isExpanded ? <ChevronDown aria-hidden /> : <ChevronUp aria-hidden />}
-        </button>
-      )}
-      <button
-        className={`composer-action composer-action--mic${
-          isDictationBusy ? " is-active" : ""
-        }${isDictationProcessing ? " is-processing is-stop" : ""}${
-          micDisabled ? " is-disabled" : ""
-        }`}
-        onClick={handleMicClick}
-        disabled={micDisabled}
-        aria-label={micAriaLabel}
-        title={micTitle}
-      >
-        {isDictationProcessing ? (
-          <X aria-hidden />
-        ) : isDictating ? (
-          <Square aria-hidden />
-        ) : (
-          <Mic aria-hidden />
-        )}
-      </button>
-      <button
-        className={`composer-action${canStop ? " is-stop" : " is-send"}${
-          canStop && isProcessing ? " is-loading" : ""
-        }`}
-        onClick={handleActionClick}
-        disabled={(disabled && !canStop) || isDictationBusy || (!canStop && !canSend)}
-        aria-label={canStop ? "Stop" : sendLabel}
-        title={canStop ? "Stop" : sendLabel}
-      >
-        {canStop ? (
-          <>
-            <span className="composer-action-stop-square" aria-hidden />
-            {isProcessing && (
-              <span className="composer-action-spinner" aria-hidden />
-            )}
-          </>
-        ) : (
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-              d="M12 5l6 6m-6-6L6 11m6-6v14"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </button>
     </div>
   );
 }

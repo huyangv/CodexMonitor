@@ -325,9 +325,10 @@ export function DiffSection({
   return (
     <div className="diff-section">
       <div className="diff-section-title diff-section-title--row">
-        <span>
-          {title} ({files.length})
-        </span>
+        <div className="diff-section-heading">
+          <span className="diff-section-label">{title}</span>
+          <span className="diff-section-count">{files.length}</span>
+        </div>
         {showSectionActions && (
           <div className="diff-section-actions" role="group" aria-label={`${title} actions`}>
             {canApplyWorktree && (

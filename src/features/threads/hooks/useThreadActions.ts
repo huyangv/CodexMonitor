@@ -113,6 +113,20 @@ function getThreadListNextCursor(result: Record<string, unknown>): string | null
   return null;
 }
 
+function getThreadSubagentMetadata(thread: Record<string, unknown>) {
+  const nickname =
+    asString(thread.agentNickname ?? thread.agent_nickname ?? "").trim() || null;
+  const role =
+    asString(
+      thread.agentRole ??
+        thread.agent_role ??
+        thread.agentType ??
+        thread.agent_type ??
+        "",
+    ).trim() || null;
+  return { nickname, role };
+}
+
 type UseThreadActionsOptions = {
   dispatch: Dispatch<ThreadAction>;
   itemsByThread: ThreadState["itemsByThread"];
@@ -527,6 +541,7 @@ export function useThreadActions({
         return null;
       }
       const isSubagent = isSubagentThreadSource(thread.source);
+      const subagentMetadata = getThreadSubagentMetadata(thread);
       return {
         id,
         name,
@@ -535,6 +550,12 @@ export function useThreadActions({
         ...(metadata.modelId ? { modelId: metadata.modelId } : {}),
         ...(metadata.effort ? { effort: metadata.effort } : {}),
         ...(isSubagent ? { isSubagent: true } : {}),
+        ...(isSubagent && subagentMetadata.nickname
+          ? { subagentNickname: subagentMetadata.nickname }
+          : {}),
+        ...(isSubagent && subagentMetadata.role
+          ? { subagentRole: subagentMetadata.role }
+          : {}),
       };
     },
     [getCustomName],

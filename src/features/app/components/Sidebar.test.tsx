@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { Sidebar } from "./Sidebar";
@@ -74,20 +74,20 @@ describe("Sidebar", () => {
     render(<Sidebar {...baseProps} />);
 
     const toggleButton = screen.getByRole("button", { name: "Toggle search" });
-    expect(screen.queryByLabelText("Search projects")).toBeNull();
+    expect(screen.queryByLabelText("Search conversations")).toBeNull();
 
     fireEvent.click(toggleButton);
-    const input = screen.getByLabelText("Search projects") as HTMLInputElement;
+    const input = screen.getByLabelText("Search conversations") as HTMLInputElement;
     expect(input).toBeTruthy();
 
     fireEvent.change(input, { target: { value: "alpha" } });
     expect(input.value).toBe("alpha");
 
     fireEvent.click(toggleButton);
-    expect(screen.queryByLabelText("Search projects")).toBeNull();
+    expect(screen.queryByLabelText("Search conversations")).toBeNull();
 
     fireEvent.click(toggleButton);
-    const reopened = screen.getByLabelText("Search projects") as HTMLInputElement;
+    const reopened = screen.getByLabelText("Search conversations") as HTMLInputElement;
     expect(reopened.value).toBe("");
   });
 
@@ -208,10 +208,299 @@ describe("Sidebar", () => {
     const renderedNames = Array.from(container.querySelectorAll(".thread-row .thread-name")).map(
       (node) => node.textContent?.trim(),
     );
+    expect(screen.getByText("Recent conversations")).toBeTruthy();
     expect(renderedNames[0]).toBe("Newer thread");
     expect(renderedNames[1]).toBe("Older thread");
     expect(screen.getByText("Alpha Project")).toBeTruthy();
     expect(screen.getByText("Beta Project")).toBeTruthy();
+  });
+
+  it("keeps a project visible when its thread matches the search query", async () => {
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[
+          {
+            id: "ws-1",
+            name: "Alpha Project",
+            path: "/tmp/alpha",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+          {
+            id: "ws-2",
+            name: "Beta Project",
+            path: "/tmp/beta",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+        ]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Workspaces",
+            workspaces: [
+              {
+                id: "ws-1",
+                name: "Alpha Project",
+                path: "/tmp/alpha",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+              {
+                id: "ws-2",
+                name: "Beta Project",
+                path: "/tmp/beta",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+            ],
+          },
+        ]}
+        threadsByWorkspace={{
+          "ws-1": [{ id: "thread-1", name: "Fix workspace restore", updatedAt: 1000 }],
+          "ws-2": [{ id: "thread-2", name: "Unrelated thread", updatedAt: 900 }],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle search" }));
+    fireEvent.change(screen.getByLabelText("Search conversations"), {
+      target: { value: "restore" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Project")).toBeTruthy();
+      expect(screen.getByText("Fix workspace restore")).toBeTruthy();
+      expect(screen.queryByText("Beta Project")).toBeNull();
+      expect(screen.queryByText("Unrelated thread")).toBeNull();
+    });
+  });
+
+  it("searches across loaded root threads before collapsed truncation", async () => {
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[
+          {
+            id: "ws-1",
+            name: "Alpha Project",
+            path: "/tmp/alpha",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+        ]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Workspaces",
+            workspaces: [
+              {
+                id: "ws-1",
+                name: "Alpha Project",
+                path: "/tmp/alpha",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+            ],
+          },
+        ]}
+        threadsByWorkspace={{
+          "ws-1": [
+            { id: "thread-1", name: "Alpha thread", updatedAt: 1000 },
+            { id: "thread-2", name: "Beta thread", updatedAt: 900 },
+            { id: "thread-3", name: "Gamma thread", updatedAt: 800 },
+            { id: "thread-4", name: "Delta thread", updatedAt: 700 },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle search" }));
+    fireEvent.change(screen.getByLabelText("Search conversations"), {
+      target: { value: "delta" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Project")).toBeTruthy();
+      expect(screen.getByText("Delta thread")).toBeTruthy();
+      expect(screen.queryByText("Alpha thread")).toBeNull();
+      expect(screen.queryByText("More...")).toBeNull();
+    });
+  });
+
+  it("keeps a project visible during search when only older pages may contain matches", async () => {
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[
+          {
+            id: "ws-1",
+            name: "Alpha Project",
+            path: "/tmp/alpha",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+        ]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Workspaces",
+            workspaces: [
+              {
+                id: "ws-1",
+                name: "Alpha Project",
+                path: "/tmp/alpha",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+            ],
+          },
+        ]}
+        threadsByWorkspace={{
+          "ws-1": [{ id: "thread-1", name: "Current page thread", updatedAt: 1000 }],
+        }}
+        threadListCursorByWorkspace={{ "ws-1": "cursor-1" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle search" }));
+    fireEvent.change(screen.getByLabelText("Search conversations"), {
+      target: { value: "historical" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Project")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Search older..." })).toBeTruthy();
+      expect(screen.queryByText("Current page thread")).toBeNull();
+    });
+  });
+
+  it("keeps the parent project visible when only a worktree thread matches search", async () => {
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[
+          {
+            id: "ws-root",
+            name: "Main Project",
+            path: "/tmp/main",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+          {
+            id: "ws-worktree",
+            name: "Feature Worktree",
+            path: "/tmp/main-feature",
+            connected: true,
+            kind: "worktree",
+            parentId: "ws-root",
+            settings: { sidebarCollapsed: false },
+          },
+        ]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Workspaces",
+            workspaces: [
+              {
+                id: "ws-root",
+                name: "Main Project",
+                path: "/tmp/main",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+            ],
+          },
+        ]}
+        threadsByWorkspace={{
+          "ws-worktree": [
+            { id: "thread-worktree", name: "Feature thread routing fix", updatedAt: 1000 },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle search" }));
+    fireEvent.change(screen.getByLabelText("Search conversations"), {
+      target: { value: "routing fix" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Main Project")).toBeTruthy();
+      expect(screen.getByText("Worktrees")).toBeTruthy();
+      expect(screen.getByText("Feature Worktree")).toBeTruthy();
+      expect(screen.getByText("Feature thread routing fix")).toBeTruthy();
+    });
+  });
+
+  it("keeps clone agents visible when their thread matches search", async () => {
+    render(
+      <Sidebar
+        {...baseProps}
+        workspaces={[
+          {
+            id: "ws-root",
+            name: "Main Project",
+            path: "/tmp/main",
+            connected: true,
+            settings: { sidebarCollapsed: false },
+          },
+          {
+            id: "ws-clone",
+            name: "Clone Agent",
+            path: "/tmp/main-clone",
+            connected: true,
+            settings: {
+              sidebarCollapsed: false,
+              cloneSourceWorkspaceId: "ws-root",
+            },
+          },
+        ]}
+        groupedWorkspaces={[
+          {
+            id: null,
+            name: "Workspaces",
+            workspaces: [
+              {
+                id: "ws-root",
+                name: "Main Project",
+                path: "/tmp/main",
+                connected: true,
+                settings: { sidebarCollapsed: false },
+              },
+              {
+                id: "ws-clone",
+                name: "Clone Agent",
+                path: "/tmp/main-clone",
+                connected: true,
+                settings: {
+                  sidebarCollapsed: false,
+                  cloneSourceWorkspaceId: "ws-root",
+                },
+              },
+            ],
+          },
+        ]}
+        threadsByWorkspace={{
+          "ws-clone": [
+            { id: "thread-clone", name: "Investigate clone search bug", updatedAt: 1000 },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle search" }));
+    fireEvent.change(screen.getByLabelText("Search conversations"), {
+      target: { value: "clone search bug" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Main Project")).toBeTruthy();
+      expect(screen.getByText("Clone agents")).toBeTruthy();
+      expect(screen.getByText("Clone Agent")).toBeTruthy();
+      expect(screen.getByText("Investigate clone search bug")).toBeTruthy();
+    });
   });
 
   it("creates a new thread from the all-threads project picker", () => {

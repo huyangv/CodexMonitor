@@ -6,6 +6,7 @@ import type { ThreadStatusById } from "../../../utils/threadStatus";
 import { ThreadList } from "./ThreadList";
 import { ThreadLoading } from "./ThreadLoading";
 import { WorktreeCard } from "./WorktreeCard";
+import { getVisibleThreadListState } from "./threadSearchUtils";
 
 type ThreadRowsResult = {
   pinnedRows: Array<{ thread: ThreadSummary; depth: number }>;
@@ -51,6 +52,8 @@ type WorktreeSectionProps = {
   onShowWorktreeMenu: (event: MouseEvent, worktree: WorkspaceInfo) => void;
   onToggleExpanded: (workspaceId: string) => void;
   onLoadOlderThreads: (workspaceId: string) => void;
+  searchQuery?: string;
+  isSearchActive?: boolean;
   sectionLabel?: string;
   sectionIcon?: ReactNode;
   className?: string;
@@ -82,6 +85,8 @@ export function WorktreeSection({
   onShowWorktreeMenu,
   onToggleExpanded,
   onLoadOlderThreads,
+  searchQuery = "",
+  isSearchActive = false,
   sectionLabel = "Worktrees",
   sectionIcon,
   className,
@@ -93,8 +98,13 @@ export function WorktreeSection({
   return (
     <div className={`worktree-section${className ? ` ${className}` : ""}`}>
       <div className="worktree-header">
-        {sectionIcon ?? <Layers className="worktree-header-icon" aria-hidden />}
-        {sectionLabel}
+        <span className="worktree-header-title">
+          <span className="worktree-header-icon-wrap">
+            {sectionIcon ?? <Layers className="worktree-header-icon" aria-hidden />}
+          </span>
+          <span>{sectionLabel}</span>
+        </span>
+        <span className="worktree-header-count">{worktrees.length}</span>
       </div>
       <div className="worktree-list">
         {worktrees.map((worktree) => {
@@ -105,21 +115,32 @@ export function WorktreeSection({
             isLoadingWorktreeThreads && worktreeThreads.length === 0;
           const worktreeNextCursor =
             threadListCursorByWorkspace[worktree.id] ?? null;
-          const showWorktreeThreadList =
-            worktreeThreads.length > 0 || Boolean(worktreeNextCursor);
           const isWorktreePaging =
             threadListPagingByWorkspace[worktree.id] ?? false;
           const isWorktreeExpanded = expandedWorkspaces.has(worktree.id);
+          const searchExpanded = isWorktreeExpanded || isSearchActive;
           const {
-            unpinnedRows: worktreeThreadRows,
+            unpinnedRows,
             totalRoots: totalWorktreeRoots,
           } = getThreadRows(
             worktreeThreads,
-            isWorktreeExpanded,
+            searchExpanded,
             worktree.id,
             getPinTimestamp,
             pinnedThreadsVersion,
           );
+          const {
+            visibleRows: filteredWorktreeThreadRows,
+            displayRootCount: displayWorktreeRootCount,
+          } = getVisibleThreadListState({
+            rows: unpinnedRows,
+            totalRoots: totalWorktreeRoots,
+            workspaceName: worktree.name,
+            query: searchQuery,
+            isSearchActive,
+          });
+          const showWorktreeThreadList =
+            filteredWorktreeThreadRows.length > 0 || Boolean(worktreeNextCursor);
 
           return (
             <WorktreeCard
@@ -136,9 +157,10 @@ export function WorktreeSection({
                 <ThreadList
                   workspaceId={worktree.id}
                   pinnedRows={[]}
-                  unpinnedRows={worktreeThreadRows}
-                  totalThreadRoots={totalWorktreeRoots}
-                  isExpanded={isWorktreeExpanded}
+                  unpinnedRows={filteredWorktreeThreadRows}
+                  totalThreadRoots={displayWorktreeRootCount}
+                  isExpanded={searchExpanded}
+                  showExpandToggle={!isSearchActive}
                   nextCursor={worktreeNextCursor}
                   isPaging={isWorktreePaging}
                   nested

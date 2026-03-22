@@ -771,7 +771,7 @@ export const ToolRow = memo(function ToolRow({
   );
 
   return (
-    <div className={`tool-inline ${isExpanded ? "tool-inline-expanded" : ""}`}>
+    <div className={`tool-inline tool-inline-row ${isExpanded ? "tool-inline-expanded" : ""}`}>
       <button
         type="button"
         className="tool-inline-bar-toggle"

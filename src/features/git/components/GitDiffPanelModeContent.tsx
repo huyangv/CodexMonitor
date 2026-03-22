@@ -123,7 +123,10 @@ export function GitBranchRow({ mode, branchName, onFetch, fetchLoading }: GitBra
 
   return (
     <div className="diff-branch-row">
-      <div className="diff-branch">{branchName || "unknown"}</div>
+      <div className="diff-branch-meta">
+        <span className="diff-branch-label">Branch</span>
+        <div className="diff-branch">{branchName || "unknown"}</div>
+      </div>
       <button
         type="button"
         className="diff-branch-refresh"
@@ -163,10 +166,12 @@ export function GitRootCurrentPath({
 
     return (
         <div className="git-root-current">
-            <span className="git-root-label">Path:</span>
-            <span className="git-root-path" title={gitRoot ?? ""}>
-                {gitRoot}
-            </span>
+            <div className="git-root-current-main">
+                <span className="git-root-label">Repository root</span>
+                <span className="git-root-path" title={gitRoot ?? ""}>
+                    {gitRoot}
+                </span>
+            </div>
             {onScanGitRoots && (
                 <button
                     type="button"
@@ -810,10 +815,9 @@ export function GitIssuesModeContent({
                         }}
                     >
                         <div className="git-issue-summary">
-                            <span className="git-issue-title">
-                                <span className="git-issue-number">#{issue.number}</span>{" "}
-                                {issue.title} <span className="git-issue-date">· {relativeTime}</span>
-                            </span>
+                            <span className="git-issue-number">#{issue.number}</span>
+                            <span className="git-issue-title">{issue.title}</span>
+                            <span className="git-issue-date">{relativeTime}</span>
                         </div>
                     </a>
                 );
@@ -870,13 +874,12 @@ export function GitPullRequestsModeContent({
                         <div className="git-pr-header">
                             <span className="git-pr-title">
                                 <span className="git-pr-number">#{pullRequest.number}</span>
-                                <span className="git-pr-title-text">
-                                    {pullRequest.title} <span className="git-pr-author-inline">@{author}</span>
-                                </span>
+                                <span className="git-pr-title-text">{pullRequest.title}</span>
                             </span>
                             <span className="git-pr-time">{relativeTime}</span>
                         </div>
                         <div className="git-pr-meta">
+                            <span className="git-pr-author-inline">@{author}</span>
                             {pullRequest.isDraft && <span className="git-pr-pill git-pr-draft">Draft</span>}
                         </div>
                     </div>
