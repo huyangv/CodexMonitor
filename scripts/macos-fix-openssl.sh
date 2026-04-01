@@ -5,15 +5,15 @@ app_path="${1:-src-tauri/target/release/bundle/macos/Codex Monitor.app}"
 identity="${CODESIGN_IDENTITY:-}"
 entitlements_path="${ENTITLEMENTS_PATH:-src-tauri/Entitlements.plist}"
 
-if [[ -z "${identity}" ]]; then
-  echo "CODESIGN_IDENTITY is required. Example:"
-  echo "  CODESIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)' $0"
-  exit 1
-fi
-
 if [[ ! -d "${app_path}" ]]; then
   echo "App bundle not found: ${app_path}"
   exit 1
+fi
+
+should_codesign=1
+if [[ -z "${identity}" ]]; then
+  should_codesign=0
+  echo "CODESIGN_IDENTITY is not set; skipping codesign."
 fi
 
 codesign_entitlements=()
@@ -108,15 +108,18 @@ if ! otool -l "${bin_path}" | { command -v rg >/dev/null 2>&1 && rg -q "@executa
   install_name_tool -add_rpath "@executable_path/../Frameworks" "${bin_path}"
 fi
 
-codesign --force --options runtime --timestamp --sign "${identity}" "${frameworks_dir}/libcrypto.3.dylib"
-codesign --force --options runtime --timestamp --sign "${identity}" "${frameworks_dir}/libssl.3.dylib"
-codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${bin_path}"
-if [[ -f "${daemon_path}" ]]; then
-  codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${daemon_path}"
+if [[ "${should_codesign}" -eq 1 ]]; then
+  codesign --force --options runtime --timestamp --sign "${identity}" "${frameworks_dir}/libcrypto.3.dylib"
+  codesign --force --options runtime --timestamp --sign "${identity}" "${frameworks_dir}/libssl.3.dylib"
+  codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${bin_path}"
+  if [[ -f "${daemon_path}" ]]; then
+    codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${daemon_path}"
+  fi
+  if [[ -f "${daemonctl_path}" ]]; then
+    codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${daemonctl_path}"
+  fi
+  codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${app_path}"
+  echo "Bundled OpenSSL dylibs and re-signed ${app_path}"
+else
+  echo "Bundled OpenSSL dylibs without codesigning ${app_path}"
 fi
-if [[ -f "${daemonctl_path}" ]]; then
-  codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${daemonctl_path}"
-fi
-codesign --force --options runtime --timestamp --sign "${identity}" "${codesign_entitlements[@]}" "${app_path}"
-
-echo "Bundled OpenSSL dylibs and re-signed ${app_path}"
